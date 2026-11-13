@@ -9,11 +9,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Extract project
-        run: unzip -o "HORROR HOUSE GitHub.zip"
+        run: unzip -o "HORROR_HOUSE_ANDROID_PROJECT.zip"
 
       - uses: actions/setup-java@v4
         with:
@@ -22,16 +23,16 @@ jobs:
 
       - uses: android-actions/setup-android@v3
         with:
-          packages: 'platform-tools' 
+          packages: 'platform-tools'
 
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
       - name: Build APK
-        run: gradle --no-daemon -p hammer_house_android assembleDebug
+        run: gradle --no-daemon -p HORROR_HOUSE_ANDROID assembleDebug
 
       - uses: actions/upload-artifact@v4
         with:
           name: HORROR-HOUSE-APK
-          path: hammer_house_android/app/build/outputs/apk/debug/app-debug.apk
+          path: HORROR_HOUSE_ANDROID/app/build/outputs/apk/debug/app-debug.apk
