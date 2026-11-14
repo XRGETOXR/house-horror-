@@ -12,18 +12,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout project
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract ASOMA project
+      - name: Extract ASOMA game
         run: |
-          test -f "house-hammer-android (1).zip"
-          rm -rf app
-          unzip -o "house-hammer-android (1).zip" -d .
+          test -f "house-hammer-android.zip"
+          unzip -o "house-hammer-android.zip" -d .
           test -f app/src/main/assets/index.html
+          test -f app/src/main/assets/lan.js
           test -f app/src/main/java/com/asoma/househammer/MainActivity.kt
           test -f app/src/main/java/com/asoma/househammer/LanServer.kt
-          echo "ASOMA project verified"
+          echo "ASOMA game verified"
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -47,10 +47,9 @@ jobs:
           gradle-version: '8.7'
 
       - name: Build ASOMA APK
-        run: |
-          gradle :app:assembleDebug --no-daemon
+        run: gradle :app:assembleDebug --no-daemon
 
-      - name: Upload ASOMA APK
+      - name: Upload new APK
         uses: actions/upload-artifact@v4
         with:
           name: ASOMA-HOUSE-HAMMER-NEW
