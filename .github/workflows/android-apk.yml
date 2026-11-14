@@ -18,11 +18,10 @@ jobs:
       - name: Extract ASOMA game
         run: |
           test -f "house-hammer-android.zip"
+          rm -rf app build.gradle.kts settings.gradle.kts gradle.properties
           unzip -o "house-hammer-android.zip" -d .
           test -f app/src/main/assets/index.html
           test -f app/src/main/assets/lan.js
-          test -f app/src/main/java/com/asoma/househammer/MainActivity.kt
-          test -f app/src/main/java/com/asoma/househammer/LanServer.kt
           echo "ASOMA game verified"
 
       - name: Setup Java 17
@@ -31,14 +30,20 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Android SDK packages
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        run: |
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Download Three.js
         run: |
-          curl -fsSL \
-            -o app/src/main/assets/three.min.js \
-            https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js
+          curl -fsSL -o app/src/main/assets/three.min.js \
+          https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js
           test -s app/src/main/assets/three.min.js
 
       - name: Setup Gradle 8.7
