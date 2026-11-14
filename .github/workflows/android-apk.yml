@@ -12,51 +12,41 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract ASOMA game
+      - name: Extract project
         run: |
-          test -f "house-hammer-android.zip"
-          rm -rf app build.gradle.kts settings.gradle.kts gradle.properties
-          unzip -o "house-hammer-android.zip" -d .
-          test -f app/src/main/assets/index.html
-          test -f app/src/main/assets/lan.js
-          echo "ASOMA game verified"
+          test -f "house-hammer-android xr.zip"
+          mkdir project
+          unzip -oq "house-hammer-android xr.zip" -d project
+          test -f project/app/src/main/assets/index.html
+          test -f project/app/src/main/assets/lan.js
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK packages
-        env:
-          ANDROID_HOME: /usr/local/lib/android/sdk
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-        run: |
-          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n 1)
-          test -n "$SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses || true
-          "$SDKMANAGER" --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-
-      - name: Download Three.js
-        run: |
-          curl -fsSL -o app/src/main/assets/three.min.js \
-          https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js
-          test -s app/src/main/assets/three.min.js
-
-      - name: Setup Gradle 8.7
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
 
-      - name: Build ASOMA APK
-        run: gradle :app:assembleDebug --no-daemon
+      - name: Download Three.js
+        run: |
+          curl -fsSL \
+            -o project/app/src/main/assets/three.min.js \
+            https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js
 
-      - name: Upload new APK
+      - name: Build APK
+        run: |
+          gradle -p project :app:assembleDebug --no-daemon
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ASOMA-HOUSE-HAMMER-NEW
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: ASOMA-HOUSE-HAMMER-APK
+          path: project/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
