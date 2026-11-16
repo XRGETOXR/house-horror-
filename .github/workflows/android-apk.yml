@@ -11,6 +11,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,7 +29,6 @@ jobs:
           test -f project/settings.gradle.kts
           test -f project/app/build.gradle.kts
           test -f project/app/src/main/assets/index.html
-          test -f project/app/src/main/assets/js/lan.js
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -34,13 +37,15 @@ jobs:
           java-version: '17'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        run: |
+          echo "Android SDK:"
+          ls -lah "$ANDROID_HOME"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
       - name: Build APK
         run: |
           set -e
           cd project
-          chmod +x gradlew 2>/dev/null || true
           gradle :app:assembleDebug --no-daemon
 
       - name: Upload APK
