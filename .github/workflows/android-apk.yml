@@ -1,57 +1,17 @@
 
-name: Build ASOMA HOUSE HAMMER APK
-
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Extract project
         run: |
           set -e
-          test -f "horror.zip"
+
+          test -f horror.zip
           mkdir -p project
-          unzip -oq "horror.zip" -d project
+          unzip -oq horror.zip -d project
 
-          test -f project/app/src/main/assets/index.html
-          test -f project/app/src/main/assets/lan.js
+          echo "===== PROJECT FILES ====="
+          find project -type f | head -200
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+          echo "===== GRADLE FILES ====="
+          find project -name "settings.gradle" -o -name "settings.gradle.kts" -o -name "build.gradle" -o -name "build.gradle.kts"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.7'
-
-      - name: Download Three.js
-        run: |
-          curl -fL \
-            https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js \
-            -o project/app/src/main/assets/three.min.js
-
-      - name: Build APK
-        run: |
-          gradle -p project :app:assembleDebug --no-daemon
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ASOMA-HOUSE-HAMMER-APK
-          path: project/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+          echo "===== ASSETS ====="
+          find project -path "*/src/main/assets/*" -type f | head -100
