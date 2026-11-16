@@ -17,9 +17,11 @@ jobs:
 
       - name: Extract project
         run: |
-          test -f "house-hammer-android xr.zip"
-          mkdir project
-          unzip -oq "house-hammer-android xr.zip" -d project
+          set -e
+          test -f "horror.zip"
+          mkdir -p project
+          unzip -oq "horror.zip" -d project
+
           test -f project/app/src/main/assets/index.html
           test -f project/app/src/main/assets/lan.js
 
@@ -29,6 +31,9 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -36,9 +41,9 @@ jobs:
 
       - name: Download Three.js
         run: |
-          curl -fsSL \
-            -o project/app/src/main/assets/three.min.js \
-            https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js
+          curl -fL \
+            https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js \
+            -o project/app/src/main/assets/three.min.js
 
       - name: Build APK
         run: |
