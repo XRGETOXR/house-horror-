@@ -1,56 +1,26 @@
 
-name: Build ASOMA HOUSE HAMMER APK
+name: Inspect ASOMA Game ZIP
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 jobs:
-  build:
+  inspect:
     runs-on: ubuntu-latest
 
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract project
+      - name: Check ZIP file
         run: |
-          set -e
-          test -f "horror .zip"
-          mkdir project
-          unzip -oq "horror .zip" -d project
+          test -f "Asoma game.zip"
+          echo "ZIP FOUND"
 
-          test -f project/settings.gradle.kts
-          test -f project/app/build.gradle.kts
-          test -f project/app/src/main/assets/index.html
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-
-      - name: Setup Android SDK
+      - name: List ZIP contents
         run: |
-          echo "Android SDK:"
-          ls -lah "$ANDROID_HOME"
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-
-      - name: Build APK
-        run: |
-          set -e
-          cd project
-          gradle :app:assembleDebug --no-daemon
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ASOMA-HOUSE-HAMMER-APK
-          path: project/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+          echo "===== GAME FILES ====="
+          unzip -Z1 "Asoma game.zip" | head -150
+          echo "===== PROJECT FILES ====="
+          unzip -Z1 "Asoma game.zip" | grep -Ei \
+          '(^|/)(index.html|package.json|build.gradle.kts|settings.gradle.kts|AndroidManifest.xml|vite.config.js)$' || true
