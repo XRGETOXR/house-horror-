@@ -6,10 +6,19 @@ on:
   push:
     branches:
       - main
+      - master
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    defaults:
+      run:
+        working-directory: hhlan
 
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
@@ -30,6 +39,12 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      - name: Check project files
+        run: |
+          test -f package.json
+          test -f capacitor.config.json
+          echo "Project folder found successfully"
+
       - name: Install Android Command Line Tools
         run: |
           mkdir -p "$ANDROID_HOME/cmdline-tools"
@@ -45,10 +60,9 @@ jobs:
 
           mv android-tools/cmdline-tools/* "$ANDROID_HOME/cmdline-tools/latest/"
 
-      - name: Install Android SDK Packages
+      - name: Install Android SDK
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
           chmod +x "$SDKMANAGER"
 
           yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses || true
@@ -61,33 +75,92 @@ jobs:
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Install Capacitor 6
+      - name: Install Capacitor
         run: |
-          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 --no-audit --no-fund
+          npm install @capacitor/core@6 @capacitor/android@6 @capacitor/cli@6 --no-audit --no-fund
 
-      - name: Build Web Game
-        run: npm run build
+      - name: Build game
+        run: |
+          npm run build
+          test -s dist/index.html
 
       - name: Prepare Android
         run: |
           if [ ! -d android ]; then
             npx cap add android
           fi
-
           npx cap sync android
 
-      - name: Build Android APK
+      - name: Install LAN plugin
         run: |
-          cd android
+          mkdir -p android/app/src/main/java/com/hammerhouse/game/lan
+          cp android-plugin/src/main/java/com/hammerhouse/game/lan/LanServerPlugin.java android/app/src/main/java/com/hammerhouse/game/lan/
+
+          MAIN="android/app/src/main/java/com/hammerhouse/game/MainActivity.java"
+
+          if [ -f "$MAIN" ] && ! grep -q 'LanServerPlugin' "$MAIN"; then
+            python - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/src/main/java/com/hammerhouse/game/MainActivity.java")
+          s = p.read_text()
+          s = s.replace(
+              "import com.getcapacitor.BridgeActivity;",
+              "import com.getcapacitor.BridgeActivity;\nimport com.hammerhouse.game.lan.LanServerPlugin;"
+          )
+          s = s.replace(
+              "public class MainActivity extends BridgeActivity {",
+              "public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(android.os.Bundle savedInstanceState) {\n        registerPlugin(LanServerPlugin.class);\n        super.onCreate(savedInstanceState);\n    }"
+          )
+          p.write_text(s)
+          PY
+          fi
+
+          APP_GRADLE="android/app/build.gradle"
+          if ! grep -q 'Java-WebSocket' "$APP_GRADLE"; then
+            sed -i '/dependencies {/a\    implementation "org.java-websocket:Java-WebSocket:1.5.7"' "$APP_GRADLE"
+          fi
+
+      - name: Configure Android permissions
+        run: |
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+
+          if ! grep -q 'usesCleartextTraffic' "$MANIFEST"; then
+            sed -i 's/<application/<application android:usesCleartextTraffic="true"/' "$MANIFEST"
+          fi
+
+          if ! grep -q 'android.permission.WAKE_LOCK' "$MANIFEST"; then
+            sed -i '/<application/i\    <uses-permission android:name="android.permission.WAKE_LOCK" />' "$MANIFEST"
+          fi
+
+          if ! grep -q 'android.permission.ACCESS_WIFI_STATE' "$MANIFEST"; then
+            sed -i '/<application/i\    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />' "$MANIFEST"
+          fi
+
+          if ! grep -q 'android.permission.CHANGE_WIFI_MULTICAST_STATE' "$MANIFEST"; then
+            sed -i '/<application/i\    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />' "$MANIFEST"
+          fi
+
+          if ! grep -q 'android:screenOrientation=' "$MANIFEST"; then
+            sed -i 's/<activity/<activity android:screenOrientation="sensorLandscape"/' "$MANIFEST"
+          fi
+
+      - name: Build APK
+        working-directory: hhlan/android
+        run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
+
+      - name: Verify APK
+        run: |
+          test -s android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: HORROR-HOUSE-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: hhlan/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 30
