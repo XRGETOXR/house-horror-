@@ -1,5 +1,5 @@
 
-name: Build بيت المطرقة APK
+name: Build HORROR HOUSE APK
 
 on:
   workflow_dispatch:
@@ -9,79 +9,47 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout repository
+      - name: Download project
         uses: actions/checkout@v4
-
-      - name: Extract Hammer man
-        run: |
-          set -e
-          test -f "Hammer man.zip"
-          mkdir -p project
-          unzip -oq "Hammer man.zip" -d project
-          test -f project/package.json
-          test -f project/vite.config.ts
-          test -f project/capacitor.config.json
-          echo "Project verified"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: 22
+          cache: npm
 
-      - name: Setup Java 17
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: 21
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android packages
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Install dependencies
-        working-directory: project
+        run: npm install
+
+      - name: Build web game
+        run: npm run build
+
+      - name: Install Capacitor 6
         run: |
-          npm pkg set 'devDependencies.esbuild=^0.28.2'
-          npm install
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
 
-      - name: Build game
-        working-directory: project
+      - name: Prepare Android
         run: |
-          npm run build
-          test -f dist/index.html
-
-      - name: Install Capacitor
-        working-directory: project
-        run: |
-          npm install @capacitor/core@6 @capacitor/android@6
-          npm install -D @capacitor/cli@6
-
-      - name: Configure game name
-        working-directory: project
-        run: |
-          cat > capacitor.config.json <<'EOF'
-          {
-            "appId": "com.hammerhouse.game",
-            "appName": "Multiplayer horror",
-            "webDir": "dist",
-            "server": {
-              "androidScheme": "https"
-            },
-            "android": {
-              "backgroundColor": "#050404"
-            }
-          }
-          EOF
-
-      - name: Add Android
-        working-directory: project
-        run: npx cap add android
-
-      - name: Sync Android
-        working-directory: project
-        run: npx cap sync android
+          npx cap add android || true
+          npx cap sync android
 
       - name: Build APK
-        working-directory: project
         run: |
           cd android
           chmod +x gradlew
@@ -90,7 +58,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: HAMMER-MAN-APK
-          path: project/android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 30
+          name: HORROR-HOUSE-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
