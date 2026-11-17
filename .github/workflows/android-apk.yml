@@ -15,9 +15,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract game
+      - name: Extract game project
         run: |
+          set -e
+
           test -f "Asoma game.zip"
+
           mkdir -p project
           unzip -oq "Asoma game.zip" -d project
 
@@ -30,8 +33,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: project/package-lock.json
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -77,7 +78,7 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
