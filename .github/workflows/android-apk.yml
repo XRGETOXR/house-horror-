@@ -11,6 +11,10 @@ jobs:
   build:
     runs-on: ubuntu-22.04
 
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -20,17 +24,28 @@ jobs:
         with:
           node-version: 22
 
-      - name: Setup Java 21
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      - name: Install Android SDK Command Line Tools
         run: |
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          cd /tmp
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O android-tools.zip
+          mkdir -p android-tools
+          unzip -q android-tools.zip -d android-tools
+          rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+          mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
+          mv android-tools/cmdline-tools/* "$ANDROID_HOME/cmdline-tools/latest/"
+
+      - name: Configure Android SDK
+        run: |
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          yes | sdkmanager --licenses || true
           sdkmanager --install \
             "platform-tools" \
             "platforms;android-35" \
@@ -46,7 +61,7 @@ jobs:
       - name: Build game
         run: npm run build
 
-      - name: Prepare Android project
+      - name: Prepare Android
         run: |
           if [ ! -d android ]; then
             npx cap add android
