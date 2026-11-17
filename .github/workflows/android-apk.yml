@@ -29,81 +29,162 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Locate Project
+        id: project
+        run: |
+          if [ -f package.json ]; then
+            DIR="."
+          else
+            DIR=$(find . -name package.json \
+              -not -path "*/node_modules/*" \
+              -not -path "*/.git/*" \
+              -print -quit | xargs -r dirname)
+          fi
+
+          if [ -z "$DIR" ]; then
+            echo "ERROR: package.json not found"
+            find . -maxdepth 3 -type f | head -150
+            exit 1
+          fi
+
+          DIR="${DIR#./}"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+          echo "Project directory: $DIR"
+
       - name: Install Android SDK
         run: |
           echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses
+
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
 
       - name: Install dependencies
+        working-directory: ${{ steps.project.outputs.dir }}
         run: |
           npm install --no-audit --no-fund
           npm install @capacitor/core@6 @capacitor/android@6 --no-audit --no-fund
           npm install -D @capacitor/cli@6 --no-audit --no-fund
 
       - name: Build game
+        working-directory: ${{ steps.project.outputs.dir }}
         run: |
           npm run build
           test -s dist/index.html
 
       - name: Prepare Android
+        working-directory: ${{ steps.project.outputs.dir }}
         run: |
           npx cap add android
           npx cap sync android
 
-      - name: Add LAN server
+      - name: Add LAN and Full Screen
+        working-directory: ${{ steps.project.outputs.dir }}
         run: |
           mkdir -p android/app/src/main/java/com/hammerhouse/game/lan
-          cp android-plugin/src/main/java/com/hammerhouse/game/lan/LanServerPlugin.java android/app/src/main/java/com/hammerhouse/game/lan/
+
+          cp android-plugin/src/main/java/com/hammerhouse/game/lan/LanServerPlugin.java \
+            android/app/src/main/java/com/hammerhouse/game/lan/
 
           python3 - <<'PY'
           from pathlib import Path
 
+          # MainActivity
           p = Path("android/app/src/main/java/com/hammerhouse/game/MainActivity.java")
+
           s = p.read_text()
-          s = s.replace(
-              "import com.getcapacitor.BridgeActivity;",
-              "import com.getcapacitor.BridgeActivity;\nimport com.hammerhouse.game.lan.LanServerPlugin;"
-          )
-          s = s.replace(
-              "public class MainActivity extends BridgeActivity {",
-              "public class MainActivity extends BridgeActivity {\n    @Override\n    public void onCreate(android.os.Bundle savedInstanceState) {\n        registerPlugin(LanServerPlugin.class);\n        super.onCreate(savedInstanceState);\n    }"
-          )
+
+          if "import com.hammerhouse.game.lan.LanServerPlugin;" not in s:
+              s = s.replace(
+                  "import com.getcapacitor.BridgeActivity;",
+                  "import com.getcapacitor.BridgeActivity;\nimport com.hammerhouse.game.lan.LanServerPlugin;"
+              )
+
+          if "registerPlugin(LanServerPlugin.class);" not in s:
+              s = s.replace(
+                  "public class MainActivity extends BridgeActivity {",
+                  """public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(android.os.Bundle savedInstanceState) {
+                  registerPlugin(LanServerPlugin.class);
+                  super.onCreate(savedInstanceState);
+                  enableFullScreen();
+              }
+
+              private void enableFullScreen() {
+                  getWindow().getDecorView().setSystemUiVisibility(
+                      android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                      | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                      | android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                      | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                      | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                      | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                  );
+              }
+
+              @Override
+              public void onWindowFocusChanged(boolean hasFocus) {
+                  super.onWindowFocusChanged(hasFocus);
+                  if (hasFocus) {
+                      enableFullScreen();
+                  }
+              }"""
+              )
+
           p.write_text(s)
 
+          # WebSocket dependency
           g = Path("android/app/build.gradle")
           s = g.read_text()
+
           if "Java-WebSocket" not in s:
               s = s.replace(
                   "dependencies {",
                   'dependencies {\n    implementation "org.java-websocket:Java-WebSocket:1.5.7"'
               )
-          p.write_text(s)
 
+          g.write_text(s)
+
+          # Android Manifest
           m = Path("android/app/src/main/AndroidManifest.xml")
           s = m.read_text()
+
           permissions = [
               "android.permission.INTERNET",
               "android.permission.ACCESS_WIFI_STATE",
               "android.permission.CHANGE_WIFI_MULTICAST_STATE",
               "android.permission.ACCESS_NETWORK_STATE"
           ]
+
           for perm in permissions:
               line = f'<uses-permission android:name="{perm}" />'
               if perm not in s:
                   s = s.replace("<application", line + "\n    <application", 1)
+
           if 'android:usesCleartextTraffic=' not in s:
-              s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
+              s = s.replace(
+                  "<application",
+                  '<application android:usesCleartextTraffic="true"',
+                  1
+              )
+
           if 'android:screenOrientation=' not in s:
-              s = s.replace("<activity", '<activity android:screenOrientation="sensorLandscape"', 1)
+              s = s.replace(
+                  "<activity",
+                  '<activity android:screenOrientation="sensorLandscape"',
+                  1
+              )
+
           m.write_text(s)
+
+          print("LAN and Full Screen configuration completed")
           PY
 
       - name: Build APK
-        working-directory: android
+        working-directory: ${{ steps.project.outputs.dir }}/android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
@@ -112,5 +193,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: HORROR-HOUSE-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ steps.project.outputs.dir }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
