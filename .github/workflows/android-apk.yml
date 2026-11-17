@@ -18,16 +18,12 @@ jobs:
       - name: Extract game project
         run: |
           set -e
-
           test -f "Asoma game.zip"
-
           mkdir -p project
           unzip -oq "Asoma game.zip" -d project
-
           test -f project/package.json
           test -f project/vite.config.ts
-
-          echo "HAMMER HOUSE project verified"
+          echo "Game verified"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -40,9 +36,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install dependencies
+      - name: Fix dependencies and install
         working-directory: project
-        run: npm install
+        run: |
+          npm pkg set 'devDependencies.esbuild=^0.28.2'
+          npm install
 
       - name: Build web game
         working-directory: project
