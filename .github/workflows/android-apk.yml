@@ -1,5 +1,5 @@
 
-name: Build OKAZI XR APK
+name: Build بيت الصمت APK
 
 on:
   workflow_dispatch:
@@ -15,36 +15,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract game project
+      - name: Extract game
         run: |
           set -e
-          test -f "okazi xr.zip"
+          test -f "silence-game.zip"
           mkdir -p project
-          unzip -oq "okazi xr.zip" -d project
+          unzip -oq "silence-game.zip" -d project
           test -f project/package.json
-          test -f project/vite.config.ts
-          echo "Game project found successfully"
+          test -f project/index.html
+          test -f project/src/main.ts
+          echo "Game files verified"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Setup Java 21
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
 
-      - name: Install dependencies
+      - name: Install game dependencies
+        working-directory: project
+        run: npm install
+
+      - name: Build game
         working-directory: project
         run: |
-          npm pkg set 'devDependencies.esbuild=^0.28.2'
-          npm install
-
-      - name: Build web game
-        working-directory: project
-        run: npm run build
+          npm run build
+          test -f dist/index.html
 
       - name: Install Capacitor
         working-directory: project
@@ -52,13 +53,13 @@ jobs:
           npm install @capacitor/core @capacitor/android
           npm install -D @capacitor/cli
 
-      - name: Configure Capacitor
+      - name: Configure Android app
         working-directory: project
         run: |
           cat > capacitor.config.json <<'EOF'
           {
-            "appId": "com.okazixr.hammerhouse",
-            "appName": "OKAZI XR",
+            "appId": "com.okazixr.beitalsamt",
+            "appName": "بيت الصمت",
             "webDir": "dist"
           }
           EOF
@@ -81,6 +82,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: OKAZI-XR-APK
+          name: بيت-الصمت-APK
           path: project/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
