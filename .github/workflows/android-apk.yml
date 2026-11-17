@@ -1,26 +1,87 @@
 
-name: Inspect ASOMA Game ZIP
+name: Build HAMMER HOUSE APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 jobs:
-  inspect:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check ZIP file
+      - name: Extract game
         run: |
           test -f "Asoma game.zip"
-          echo "ZIP FOUND"
+          mkdir -p project
+          unzip -oq "Asoma game.zip" -d project
 
-      - name: List ZIP contents
+          test -f project/package.json
+          test -f project/vite.config.ts
+
+          echo "HAMMER HOUSE project verified"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: project/package-lock.json
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        working-directory: project
+        run: npm install
+
+      - name: Build web game
+        working-directory: project
+        run: npm run build
+
+      - name: Install Capacitor
+        working-directory: project
         run: |
-          echo "===== GAME FILES ====="
-          unzip -Z1 "Asoma game.zip" | head -150
-          echo "===== PROJECT FILES ====="
-          unzip -Z1 "Asoma game.zip" | grep -Ei \
-          '(^|/)(index.html|package.json|build.gradle.kts|settings.gradle.kts|AndroidManifest.xml|vite.config.js)$' || true
+          npm install @capacitor/core @capacitor/android
+          npm install -D @capacitor/cli
+
+      - name: Configure Capacitor
+        working-directory: project
+        run: |
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.asoma.hammerhouse",
+            "appName": "HAMMER HOUSE",
+            "webDir": "dist"
+          }
+          EOF
+
+      - name: Add Android platform
+        working-directory: project
+        run: npx cap add android
+
+      - name: Sync Android
+        working-directory: project
+        run: npx cap sync android
+
+      - name: Build APK
+        working-directory: project
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: HAMMER-HOUSE-APK
+          path: project/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
