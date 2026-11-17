@@ -15,16 +15,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Extract GETO game
+      - name: Extract Hammer man
         run: |
           set -e
-          test -f "GETO.zip"
+          test -f "Hammer man.zip"
           mkdir -p project
-          unzip -oq "GETO.zip" -d project
+          unzip -oq "Hammer man.zip" -d project
           test -f project/package.json
           test -f project/vite.config.ts
-          test -f project/index.html
-          echo "Game files verified"
+          test -f project/capacitor.config.json
+          echo "Project verified"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -37,7 +37,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Fix dependencies
+      - name: Install dependencies
         working-directory: project
         run: |
           npm pkg set 'devDependencies.esbuild=^0.28.2'
@@ -49,19 +49,19 @@ jobs:
           npm run build
           test -f dist/index.html
 
-      - name: Install Capacitor Android
+      - name: Install Capacitor
         working-directory: project
         run: |
           npm install @capacitor/core@6 @capacitor/android@6
           npm install -D @capacitor/cli@6
 
-      - name: Configure app
+      - name: Configure game name
         working-directory: project
         run: |
           cat > capacitor.config.json <<'EOF'
           {
             "appId": "com.hammerhouse.game",
-            "appName": "بيت المطرقة",
+            "appName": "Multiplayer horror",
             "webDir": "dist",
             "server": {
               "androidScheme": "https"
@@ -72,39 +72,13 @@ jobs:
           }
           EOF
 
-      - name: Add Android platform
+      - name: Add Android
         working-directory: project
         run: npx cap add android
 
       - name: Sync Android
         working-directory: project
         run: npx cap sync android
-
-      - name: Configure Android
-        working-directory: project
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("android/app/src/main/AndroidManifest.xml")
-          xml = p.read_text()
-
-          if "android:screenOrientation" not in xml:
-              xml = xml.replace(
-                  "<activity",
-                  '<activity android:screenOrientation="sensorLandscape"',
-                  1
-              )
-
-          if "android.permission.WAKE_LOCK" not in xml:
-              xml = xml.replace(
-                  "<application",
-                  '<uses-permission android:name="android.permission.WAKE_LOCK" />\n    <application',
-                  1
-              )
-
-          p.write_text(xml)
-          PY
 
       - name: Build APK
         working-directory: project
@@ -116,7 +90,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: hammer-house-apk
+          name: HAMMER-MAN-APK
           path: project/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
