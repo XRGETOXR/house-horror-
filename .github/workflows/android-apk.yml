@@ -24,13 +24,23 @@ jobs:
         with:
           node-version: 22
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      # Extract the exact game ZIP
+      - name: Install Android SDK
+        run: |
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
       - name: Extract Multiplayer Horror
         run: |
           set -e
@@ -38,23 +48,17 @@ jobs:
           ZIP="Multiplayer horror .zip"
 
           if [ ! -f "$ZIP" ]; then
-            echo "ERROR: $ZIP not found in repository"
+            echo "ERROR: Multiplayer horror .zip not found"
             exit 1
           fi
 
           mkdir -p .build
           unzip -oq "$ZIP" -d .build
 
-          if [ ! -f ".build/hhlan/package.json" ]; then
-            echo "ERROR: Expected hhlan/package.json not found"
-            find .build -maxdepth 4 -type f | head -100
-            exit 1
-          fi
-
+          test -f .build/hhlan/package.json
           echo "Game extracted successfully"
 
-      # All following Node commands run inside hhlan
-      - name: Install dependencies
+      - name: Install Dependencies
         working-directory: .build/hhlan
         run: |
           npm install --no-audit --no-fund
@@ -65,7 +69,7 @@ jobs:
           npm install -D @capacitor/cli@6 \
             --no-audit --no-fund
 
-      - name: Build game
+      - name: Build Game
         working-directory: .build/hhlan
         run: |
           npm run build
@@ -74,11 +78,13 @@ jobs:
       - name: Prepare Android
         working-directory: .build/hhlan
         run: |
-          npx cap add android
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
           npx cap sync android
 
-      # Install original LAN plugin
-      - name: Install LAN Server
+      - name: Install and Fix LAN Plugin
         working-directory: .build/hhlan
         run: |
           set -e
@@ -86,7 +92,7 @@ jobs:
           SOURCE="android-plugin/src/main/java/com/hammerhouse/game/lan/LanServerPlugin.java"
 
           if [ ! -f "$SOURCE" ]; then
-            echo "ERROR: LAN plugin missing"
+            echo "LAN plugin not found"
             exit 1
           fi
 
@@ -95,26 +101,57 @@ jobs:
           mkdir -p "$TARGET"
           cp "$SOURCE" "$TARGET/LanServerPlugin.java"
 
-          # WebSocket dependency
+          # Fix Capacitor JSONObject / JSObject incompatibility
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("android/app/src/main/java/com/hammerhouse/game/lan/LanServerPlugin.java")
+          s = p.read_text()
+
+          if "import com.getcapacitor.JSObject;" not in s:
+              s = s.replace(
+                  "import com.getcapacitor.Plugin;",
+                  "import com.getcapacitor.Plugin;\nimport com.getcapacitor.JSObject;"
+              )
+
+          old = "JSONObject out = new JSONObject();"
+          new = "JSObject out = new JSObject();"
+
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit("Could not find LAN result object")
+
+          p.write_text(s)
+          print("LAN JSObject compatibility fixed")
+          PY
+
+          # Add WebSocket dependency
           GRADLE="android/app/build.gradle"
 
           if ! grep -q "Java-WebSocket" "$GRADLE"; then
             sed -i '/dependencies {/a\    implementation "org.java-websocket:Java-WebSocket:1.5.7"' "$GRADLE"
           fi
 
-          # Register plugin and enable immersive full screen
+      - name: Configure MainActivity
+        working-directory: .build/hhlan
+        run: |
           python3 - <<'PY'
           from pathlib import Path
 
           p = Path("android/app/src/main/java/com/hammerhouse/game/MainActivity.java")
+
+          if not p.exists():
+              raise SystemExit("MainActivity.java not found")
+
           s = p.read_text()
 
-          plugin_import = "import com.hammerhouse.game.lan.LanServerPlugin;"
+          imp = "import com.hammerhouse.game.lan.LanServerPlugin;"
 
-          if plugin_import not in s:
+          if imp not in s:
               s = s.replace(
                   "import com.getcapacitor.BridgeActivity;",
-                  "import com.getcapacitor.BridgeActivity;\n" + plugin_import
+                  "import com.getcapacitor.BridgeActivity;\n" + imp
               )
 
           if "registerPlugin(LanServerPlugin.class)" not in s:
@@ -123,9 +160,7 @@ jobs:
               if marker not in s:
                   raise SystemExit("MainActivity class declaration not found")
 
-              s = s.replace(
-                  marker,
-                  marker + """
+              s = s.replace(marker, marker + """
               @Override
               public void onCreate(android.os.Bundle savedInstanceState) {
                   registerPlugin(LanServerPlugin.class);
@@ -151,14 +186,12 @@ jobs:
                       enableFullScreen();
                   }
               }
-              """
-              )
+              """)
 
           p.write_text(s)
-          print("LAN plugin registered and Full Screen enabled")
+          print("MainActivity configured")
           PY
 
-      # Android landscape and network settings
       - name: Configure Android Manifest
         working-directory: .build/hhlan
         run: |
@@ -195,20 +228,19 @@ jobs:
               )
 
           p.write_text(s)
-          print("Landscape and network permissions configured")
+          print("Landscape and network settings configured")
           PY
 
-      # Build APK
       - name: Build APK
         working-directory: .build/hhlan/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon
 
       - name: Verify APK
         run: |
           test -s .build/hhlan/android/app/build/outputs/apk/debug/app-debug.apk
-          echo "APK build successful"
+          echo "APK successfully created"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
