@@ -2,164 +2,163 @@
 name: Build Hammer Man Multiplayer APK
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build:
+  build-apk:
+    name: Build Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Verify Hammer Man project
+        run: |
+          test -f package.json
+          test -f capacitor.config.json
+          test -f vite.config.ts
+          echo "Hammer Man Multiplayer project found"
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '22'
 
-      - name: Setup Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: '17'
 
-      - name: Extract Hammer Man Multiplayer
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
         run: |
-          set -e
-          ZIP="Hammer Man Multiplayer .zip"
-
-          if [ ! -f "$ZIP" ]; then
-            echo "ERROR: $ZIP not found"
-            ls -la
-            exit 1
-          fi
-
-          mkdir -p game
-          unzip -oq "$ZIP" -d game
-
-          PACKAGE=$(find game -type f -name package.json \
-            -not -path "*/node_modules/*" | head -n 1)
-
-          if [ -z "$PACKAGE" ]; then
-            echo "ERROR: package.json not found"
-            exit 1
-          fi
-
-          PROJECT="${PACKAGE%/package.json}"
-
-          if [ ! -f "$PROJECT/capacitor.config.json" ]; then
-            echo "ERROR: capacitor.config.json not found"
-            exit 1
-          fi
-
-          echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
-          echo "Selected game: $PROJECT"
-
-      - name: Install Android SDK
-        run: |
-          set -e
-          SDK="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
-          yes | "$SDK" --licenses || true
-
-          "$SDK" --sdk_root="$ANDROID_HOME" --install \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-      - name: Install Dependencies
-        run: |
-          cd "$PROJECT_DIR"
-
           npm install --legacy-peer-deps --no-audit --no-fund
 
-          npm install @capacitor/core@6 \
-            @capacitor/android@6 \
-            --legacy-peer-deps --no-audit --no-fund
-
-          npm install -D @capacitor/cli@6 \
-            --legacy-peer-deps --no-audit --no-fund
-
-      - name: Build Game
+      - name: Build game
         run: |
-          cd "$PROJECT_DIR"
           npm run build
-          test -s dist/index.html
 
-      - name: Prepare Android
+      - name: Install Capacitor Android
         run: |
-          cd "$PROJECT_DIR"
+          npm install --no-save --legacy-peer-deps \
+            @capacitor/core@6 \
+            @capacitor/cli@6 \
+            @capacitor/android@6 \
+            --no-audit --no-fund
 
+      - name: Create and sync Android project
+        run: |
           if [ ! -d android ]; then
             npx cap add android
           fi
-
           npx cap sync android
 
-      - name: Configure Android
+      - name: Configure Maven mirror
         run: |
-          cd "$PROJECT_DIR"
+          node <<'NODE'
+          const fs = require('fs');
 
-          python3 - <<'PY'
-          from pathlib import Path
+          const files = [
+            'android/build.gradle',
+            'android/settings.gradle',
+            'android/app/build.gradle'
+          ];
 
-          p = Path("android/app/src/main/AndroidManifest.xml")
-          s = p.read_text()
+          const mirror =
+            "maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }";
 
-          permissions = [
-              "android.permission.INTERNET",
-              "android.permission.ACCESS_WIFI_STATE",
-              "android.permission.CHANGE_WIFI_MULTICAST_STATE",
-              "android.permission.ACCESS_NETWORK_STATE"
-          ]
+          for (const file of files) {
+            if (!fs.existsSync(file)) continue;
 
-          for perm in permissions:
-              if perm not in s:
-                  s = s.replace(
-                      "<application",
-                      f'<uses-permission android:name="{perm}" />\n    <application',
-                      1
-                  )
+            let content = fs.readFileSync(file, 'utf8');
 
-          if "android:usesCleartextTraffic" not in s:
-              s = s.replace(
-                  "<application",
-                  '<application android:usesCleartextTraffic="true"',
-                  1
-              )
+            if (!content.includes('maven-central.storage-download.googleapis.com')) {
+              content = content.replace(
+                /mavenCentral\(\)/g,
+                `${mirror}\n        mavenCentral()`
+              );
+              fs.writeFileSync(file, content);
+            }
+          }
 
-          if "android:screenOrientation" not in s:
-              s = s.replace(
-                  "<activity",
-                  '<activity android:screenOrientation="sensorLandscape"',
-                  1
-              )
+          console.log('Maven mirror configured');
+          NODE
 
-          p.write_text(s)
-          PY
-
-      - name: Build APK
+      - name: Configure Android fullscreen and landscape
         run: |
-          cd "$PROJECT_DIR/android"
+          node <<'NODE'
+          const fs = require('fs');
+
+          const manifest =
+            'android/app/src/main/AndroidManifest.xml';
+
+          let xml = fs.readFileSync(manifest, 'utf8');
+
+          if (!xml.includes('android:screenOrientation')) {
+            xml = xml.replace(
+              '<activity',
+              '<activity android:screenOrientation="sensorLandscape"'
+            );
+          }
+
+          if (!xml.includes('android.permission.WAKE_LOCK')) {
+            xml = xml.replace(
+              '</manifest>',
+              '    <uses-permission android:name="android.permission.WAKE_LOCK" />\n</manifest>'
+            );
+          }
+
+          fs.writeFileSync(manifest, xml);
+
+          const styles =
+            'android/app/src/main/res/values/styles.xml';
+
+          if (fs.existsSync(styles)) {
+            let s = fs.readFileSync(styles, 'utf8');
+
+            if (!s.includes('windowFullscreen')) {
+              s = s.replace(
+                '</style>',
+                '    <item name="android:windowFullscreen">true</item>\n    </style>'
+              );
+              fs.writeFileSync(styles, s);
+            }
+          }
+          NODE
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Debug APK
+        run: |
+          cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --max-workers=2 \
+            --stacktrace
 
-      - name: Verify APK
+      - name: Check APK
         run: |
-          APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
-          ls -lh "$APK"
+          test -f android/app/build/outputs/apk/debug/app-debug.apk
+          ls -lh android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: HAMMER-MAN-MULTIPLAYER-APK
-          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          name: Hammer-Man-Multiplayer-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
