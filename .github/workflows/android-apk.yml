@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Android APK
+    name: Build Hammer Man APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -30,67 +30,90 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Locate and Extract Game
-        id: locate
+      - name: Find Correct Game ZIP
         shell: bash
         run: |
           set -e
+          python3 - <<'PY'
+          import os
+          import zipfile
+          from pathlib import Path
 
-          if [ -f package.json ]; then
-            PROJECT="."
-          else
-            mkdir -p .build
+          root = Path(".")
+          project = None
 
-            ZIP=$(find . -maxdepth 3 -type f \
-              -iname "*.zip" \
-              -not -path "./.git/*" \
-              -not -path "./.build/*" \
-              | head -n 1)
+          if Path("package.json").is_file() and Path("capacitor.config.json").is_file():
+              project = Path(".")
+          else:
+              build_dir = Path(".build/game")
+              build_dir.mkdir(parents=True, exist_ok=True)
 
-            if [ -z "$ZIP" ]; then
-              echo "ERROR: Game ZIP not found"
-              exit 1
-            fi
+              for archive in root.rglob("*.zip"):
+                  if ".git" in archive.parts or ".build" in archive.parts:
+                      continue
 
-            echo "Extracting: $ZIP"
-            unzip -oq "$ZIP" -d .build
+                  try:
+                      with zipfile.ZipFile(archive) as z:
+                          names = [
+                              n.replace("\\", "/").lstrip("./")
+                              for n in z.namelist()
+                          ]
 
-            PACKAGE=$(find .build -type f \
-              -name package.json \
-              -not -path "*/node_modules/*" \
-              -not -path "*/android/*" \
-              | head -n 1)
+                          packages = {
+                              str(Path(n).parent)
+                              for n in names
+                              if Path(n).name == "package.json"
+                          }
 
-            if [ -z "$PACKAGE" ]; then
-              echo "ERROR: package.json not found inside ZIP"
-              exit 1
-            fi
+                          configs = {
+                              str(Path(n).parent)
+                              for n in names
+                              if Path(n).name == "capacitor.config.json"
+                          }
 
-            PROJECT="${PACKAGE%/package.json}"
-          fi
+                          matches = packages & configs
 
-          if [ ! -f "$PROJECT/capacitor.config.json" ]; then
-            echo "ERROR: capacitor.config.json not found"
-            exit 1
-          fi
+                          if matches:
+                              folder = sorted(matches, key=len)[0]
+                              print(f"Correct game archive: {archive}")
+                              print(f"Project folder inside ZIP: {folder}")
 
-          echo "dir=$PROJECT" >> "$GITHUB_OUTPUT"
-          echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
+                              z.extractall(build_dir)
 
-          echo "Game project found: $PROJECT"
+                              project = build_dir / folder
+                              if folder == ".":
+                                  project = build_dir
+                              break
+
+                  except zipfile.BadZipFile:
+                      continue
+
+          if project is None:
+              raise SystemExit(
+                  "ERROR: No ZIP containing both package.json "
+                  "and capacitor.config.json was found."
+              )
+
+          if not (project / "package.json").is_file():
+              raise SystemExit("ERROR: package.json missing")
+
+          if not (project / "capacitor.config.json").is_file():
+              raise SystemExit("ERROR: capacitor.config.json missing")
+
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"PROJECT_DIR={project.as_posix()}\n")
+
+          print(f"Selected project: {project}")
+          PY
 
       - name: Install Android SDK
-        shell: bash
         run: |
           set -e
 
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
             -type f -name sdkmanager | head -n 1)
 
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager not found"
-            exit 1
-          fi
+          test -n "$SDKMANAGER"
 
           yes | "$SDKMANAGER" \
             --sdk_root="$ANDROID_HOME" --licenses || true
@@ -100,15 +123,11 @@ jobs:
             "platforms;android-35" \
             "build-tools;35.0.0"
 
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-
-      - name: Fix Dependency Versions
+      - name: Fix Dependency Conflict
         run: |
           cd "$PROJECT_DIR"
 
           npm pkg set 'devDependencies.esbuild=^0.28.2'
-
-          echo "esbuild version requirement updated"
 
       - name: Install Dependencies
         run: |
@@ -130,12 +149,9 @@ jobs:
 
           npm run build
 
-          if [ ! -s dist/index.html ]; then
-            echo "ERROR: Game build failed"
-            exit 1
-          fi
+          test -s dist/index.html
 
-      - name: Create Android Project
+      - name: Prepare Android
         run: |
           cd "$PROJECT_DIR"
 
@@ -185,7 +201,6 @@ jobs:
               )
 
           p.write_text(s)
-          print("Android manifest configured")
           PY
 
       - name: Build APK
@@ -193,25 +208,19 @@ jobs:
           cd "$PROJECT_DIR/android"
 
           chmod +x gradlew
-
           ./gradlew assembleDebug --no-daemon
 
       - name: Verify APK
         run: |
           APK="$PROJECT_DIR/android/app/build/outputs/apk/debug/app-debug.apk"
 
-          if [ ! -s "$APK" ]; then
-            echo "ERROR: APK was not created"
-            exit 1
-          fi
-
-          echo "APK successfully created"
+          test -s "$APK"
           ls -lh "$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: HAMMER-MAN-MULTIPLAYER-APK
-          path: ${{ steps.locate.outputs.dir }}/android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
