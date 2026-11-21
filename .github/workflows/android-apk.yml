@@ -4,24 +4,27 @@ name: Build Hammer Man Multiplayer APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
 
 permissions:
   contents: read
 
 jobs:
   build:
+    name: Build Hammer Man Android APK
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '22'
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -29,50 +32,72 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-      - name: Find Hammer Man project
-        id: project
+      - name: Extract Hammer Man Multiplayer
+        id: game
         shell: bash
         run: |
-          CONFIG=$(find . -name capacitor.config.json \
-            -not -path "*/node_modules/*" \
-            -not -path "*/android/*" | head -n 1)
+          ZIP="./Hammer Man Multiplayer .zip"
 
-          if [ -z "$CONFIG" ]; then
-            echo "ERROR: capacitor.config.json not found"
-            find . -maxdepth 5 -type f | head -200
+          if [ ! -f "$ZIP" ]; then
+            echo "ERROR: Hammer Man Multiplayer ZIP not found"
             exit 1
           fi
 
-          PROJECT_DIR=$(dirname "$CONFIG")
+          PROJECT="$RUNNER_TEMP/hammer-man-game"
+          mkdir -p "$PROJECT"
 
-          if [ ! -f "$PROJECT_DIR/package.json" ]; then
-            echo "ERROR: package.json not found"
+          unzip -oq "$ZIP" -d "$PROJECT"
+
+          if [ ! -f "$PROJECT/package.json" ]; then
+            echo "ERROR: package.json missing inside game ZIP"
             exit 1
           fi
 
-          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+          if [ ! -f "$PROJECT/capacitor.config.json" ]; then
+            echo "ERROR: capacitor.config.json missing inside game ZIP"
+            exit 1
+          fi
 
-      - name: Install dependencies
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: npm install --legacy-peer-deps --no-audit --no-fund
+          echo "dir=$PROJECT" >> "$GITHUB_OUTPUT"
+          echo "Hammer Man Multiplayer extracted successfully"
+
+      - name: Setup Android SDK
+        shell: bash
+        run: |
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+
+          SDKMANAGER=$(find "$SDK/cmdline-tools" \
+            -type f -name sdkmanager 2>/dev/null | head -n 1)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: Android SDK manager not found"
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+
+          yes | "$SDKMANAGER" --licenses || true
+
+          "$SDKMANAGER" --install \
+            "platform-tools" \
+            "platforms;android-34" \
+            "platforms;android-35" \
+            "build-tools;34.0.0" \
+            "build-tools;35.0.0"
+
+      - name: Install game dependencies
+        working-directory: ${{ steps.game.outputs.dir }}
+        run: |
+          npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: Build game
-        working-directory: ${{ steps.project.outputs.dir }}
-        run: npm run build
+        working-directory: ${{ steps.game.outputs.dir }}
+        run: |
+          npm run build
 
-      - name: Install Capacitor
-        working-directory: ${{ steps.project.outputs.dir }}
+      - name: Install Capacitor Android
+        working-directory: ${{ steps.game.outputs.dir }}
         run: |
           npm install --no-save --legacy-peer-deps \
             @capacitor/core@6 \
@@ -80,51 +105,69 @@ jobs:
             @capacitor/android@6 \
             --no-audit --no-fund
 
-      - name: Create and sync Android
-        working-directory: ${{ steps.project.outputs.dir }}
+      - name: Create Android project
+        working-directory: ${{ steps.game.outputs.dir }}
         run: |
           if [ ! -d android ]; then
             npx cap add android
           fi
+
           npx cap sync android
 
       - name: Configure Maven mirror
-        working-directory: ${{ steps.project.outputs.dir }}
+        working-directory: ${{ steps.game.outputs.dir }}
         run: |
           node <<'NODE'
           const fs = require('fs');
+
           const files = [
             'android/build.gradle',
             'android/settings.gradle',
             'android/app/build.gradle'
           ];
-          const mirror = "maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }";
+
+          const mirror =
+            "maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }";
+
           for (const file of files) {
             if (!fs.existsSync(file)) continue;
+
             let content = fs.readFileSync(file, 'utf8');
+
             if (!content.includes('maven-central.storage-download.googleapis.com')) {
-              content = content.replace(/mavenCentral\(\)/g, `${mirror}\n        mavenCentral()`);
+              content = content.replace(
+                /mavenCentral\(\)/g,
+                `${mirror}\n        mavenCentral()`
+              );
+
               fs.writeFileSync(file, content);
             }
           }
+
+          console.log('Maven mirror configured');
           NODE
 
-      - name: Build APK
-        working-directory: ${{ steps.project.outputs.dir }}/android
+      - name: Build Android APK
+        working-directory: ${{ steps.game.outputs.dir }}/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --max-workers=2
+
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --max-workers=2
 
       - name: Verify APK
-        working-directory: ${{ steps.project.outputs.dir }}
+        working-directory: ${{ steps.game.outputs.dir }}
         run: |
-          test -f android/app/build/outputs/apk/debug/app-debug.apk
-          ls -lh android/app/build/outputs/apk/debug/app-debug.apk
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
 
-      - name: Upload APK
+          test -f "$APK"
+          ls -lh "$APK"
+
+      - name: Upload Hammer Man APK
         uses: actions/upload-artifact@v4
         with:
           name: Hammer-Man-Multiplayer-APK
-          path: ${{ steps.project.outputs.dir }}/android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ steps.game.outputs.dir }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
