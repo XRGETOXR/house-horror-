@@ -1,5 +1,5 @@
 
-name: Build HORROR HOUSE APK
+name: Build Hammer Man APK
 
 on:
   workflow_dispatch:
@@ -11,12 +11,11 @@ permissions:
 
 jobs:
   build:
-    name: Build HORROR HOUSE Android
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 45
 
     steps:
-      - name: Checkout
+      - name: Download project
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -30,170 +29,34 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Install Android SDK
+      - name: Install Android SDK packages
         run: |
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          SDK="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDK" --licenses || true
+          "$SDK" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
-
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
-
-      - name: Extract Multiplayer Horror
+      - name: Check project files
         run: |
-          set -e
+          test -f package.json
+          test -f capacitor.config.json
+          echo "Hammer Man project found"
 
-          ZIP="Multiplayer horror .zip"
-
-          if [ ! -f "$ZIP" ]; then
-            echo "ERROR: Multiplayer horror .zip not found"
-            exit 1
-          fi
-
-          mkdir -p .build
-          unzip -oq "$ZIP" -d .build
-
-          test -f .build/hhlan/package.json
-          echo "Game extracted successfully"
-
-      - name: Install Dependencies
-        working-directory: .build/hhlan
+      - name: Install dependencies
         run: |
           npm install --no-audit --no-fund
+          npm install @capacitor/core@6 @capacitor/android@6 @capacitor/cli@6 --no-audit --no-fund
 
-          npm install @capacitor/core@6 @capacitor/android@6 \
-            --no-audit --no-fund
-
-          npm install -D @capacitor/cli@6 \
-            --no-audit --no-fund
-
-      - name: Build Game
-        working-directory: .build/hhlan
+      - name: Build game
         run: |
           npm run build
           test -s dist/index.html
 
-      - name: Prepare Android
-        working-directory: .build/hhlan
+      - name: Create Android project
         run: |
-          if [ ! -d android ]; then
-            npx cap add android
-          fi
-
+          npx cap add android
           npx cap sync android
 
-      - name: Install and Fix LAN Plugin
-        working-directory: .build/hhlan
-        run: |
-          set -e
-
-          SOURCE="android-plugin/src/main/java/com/hammerhouse/game/lan/LanServerPlugin.java"
-
-          if [ ! -f "$SOURCE" ]; then
-            echo "LAN plugin not found"
-            exit 1
-          fi
-
-          TARGET="android/app/src/main/java/com/hammerhouse/game/lan"
-
-          mkdir -p "$TARGET"
-          cp "$SOURCE" "$TARGET/LanServerPlugin.java"
-
-          # Fix Capacitor JSONObject / JSObject incompatibility
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("android/app/src/main/java/com/hammerhouse/game/lan/LanServerPlugin.java")
-          s = p.read_text()
-
-          if "import com.getcapacitor.JSObject;" not in s:
-              s = s.replace(
-                  "import com.getcapacitor.Plugin;",
-                  "import com.getcapacitor.Plugin;\nimport com.getcapacitor.JSObject;"
-              )
-
-          old = "JSONObject out = new JSONObject();"
-          new = "JSObject out = new JSObject();"
-
-          if old in s:
-              s = s.replace(old, new, 1)
-          elif new not in s:
-              raise SystemExit("Could not find LAN result object")
-
-          p.write_text(s)
-          print("LAN JSObject compatibility fixed")
-          PY
-
-          # Add WebSocket dependency
-          GRADLE="android/app/build.gradle"
-
-          if ! grep -q "Java-WebSocket" "$GRADLE"; then
-            sed -i '/dependencies {/a\    implementation "org.java-websocket:Java-WebSocket:1.5.7"' "$GRADLE"
-          fi
-
-      - name: Configure MainActivity
-        working-directory: .build/hhlan
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("android/app/src/main/java/com/hammerhouse/game/MainActivity.java")
-
-          if not p.exists():
-              raise SystemExit("MainActivity.java not found")
-
-          s = p.read_text()
-
-          imp = "import com.hammerhouse.game.lan.LanServerPlugin;"
-
-          if imp not in s:
-              s = s.replace(
-                  "import com.getcapacitor.BridgeActivity;",
-                  "import com.getcapacitor.BridgeActivity;\n" + imp
-              )
-
-          if "registerPlugin(LanServerPlugin.class)" not in s:
-              marker = "public class MainActivity extends BridgeActivity {"
-
-              if marker not in s:
-                  raise SystemExit("MainActivity class declaration not found")
-
-              s = s.replace(marker, marker + """
-              @Override
-              public void onCreate(android.os.Bundle savedInstanceState) {
-                  registerPlugin(LanServerPlugin.class);
-                  super.onCreate(savedInstanceState);
-                  enableFullScreen();
-              }
-
-              private void enableFullScreen() {
-                  getWindow().getDecorView().setSystemUiVisibility(
-                      android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
-                      | android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                      | android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                      | android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                      | android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                      | android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                  );
-              }
-
-              @Override
-              public void onWindowFocusChanged(boolean hasFocus) {
-                  super.onWindowFocusChanged(hasFocus);
-                  if (hasFocus) {
-                      enableFullScreen();
-                  }
-              }
-              """)
-
-          p.write_text(s)
-          print("MainActivity configured")
-          PY
-
-      - name: Configure Android Manifest
-        working-directory: .build/hhlan
+      - name: Configure Android
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -209,18 +72,21 @@ jobs:
           ]
 
           for perm in permissions:
-              line = f'<uses-permission android:name="{perm}" />'
               if perm not in s:
-                  s = s.replace("<application", line + "\n    <application", 1)
+                  s = s.replace(
+                      "<application",
+                      f'<uses-permission android:name="{perm}" />\n    <application',
+                      1
+                  )
 
-          if 'android:usesCleartextTraffic=' not in s:
+          if "android:usesCleartextTraffic" not in s:
               s = s.replace(
                   "<application",
                   '<application android:usesCleartextTraffic="true"',
                   1
               )
 
-          if 'android:screenOrientation=' not in s:
+          if "android:screenOrientation" not in s:
               s = s.replace(
                   "<activity",
                   '<activity android:screenOrientation="sensorLandscape"',
@@ -228,24 +94,22 @@ jobs:
               )
 
           p.write_text(s)
-          print("Landscape and network settings configured")
           PY
 
       - name: Build APK
-        working-directory: .build/hhlan/android
+        working-directory: android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
       - name: Verify APK
         run: |
-          test -s .build/hhlan/android/app/build/outputs/apk/debug/app-debug.apk
-          echo "APK successfully created"
+          test -s android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: HORROR-HOUSE-APK
-          path: .build/hhlan/android/app/build/outputs/apk/debug/app-debug.apk
+          name: HAMMER-MAN-MULTIPLAYER-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
