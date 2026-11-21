@@ -24,13 +24,14 @@ jobs:
         with:
           node-version: 22
 
-      - name: Setup Java 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
 
-      - name: Locate Game Project
+      - name: Locate and Extract Game
+        id: locate
         shell: bash
         run: |
           set -e
@@ -43,6 +44,7 @@ jobs:
             ZIP=$(find . -maxdepth 3 -type f \
               -iname "*.zip" \
               -not -path "./.git/*" \
+              -not -path "./.build/*" \
               | head -n 1)
 
             if [ -z "$ZIP" ]; then
@@ -50,7 +52,7 @@ jobs:
               exit 1
             fi
 
-            echo "Extracting $ZIP"
+            echo "Extracting: $ZIP"
             unzip -oq "$ZIP" -d .build
 
             PACKAGE=$(find .build -type f \
@@ -60,35 +62,53 @@ jobs:
               | head -n 1)
 
             if [ -z "$PACKAGE" ]; then
-              echo "ERROR: package.json not found"
+              echo "ERROR: package.json not found inside ZIP"
               exit 1
             fi
 
             PROJECT="${PACKAGE%/package.json}"
           fi
 
-          test -f "$PROJECT/capacitor.config.json"
+          if [ ! -f "$PROJECT/capacitor.config.json" ]; then
+            echo "ERROR: capacitor.config.json not found"
+            exit 1
+          fi
+
+          echo "dir=$PROJECT" >> "$GITHUB_OUTPUT"
           echo "PROJECT_DIR=$PROJECT" >> "$GITHUB_ENV"
-          echo "Game project: $PROJECT"
+
+          echo "Game project found: $PROJECT"
 
       - name: Install Android SDK
         shell: bash
         run: |
           set -e
 
-          SDK="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
+            -type f -name sdkmanager | head -n 1)
 
-          if [ ! -f "$SDK" ]; then
-            echo "ERROR: Android SDK manager not found"
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found"
             exit 1
           fi
 
-          yes | "$SDK" --licenses || true
+          yes | "$SDKMANAGER" \
+            --sdk_root="$ANDROID_HOME" --licenses || true
 
-          "$SDK" \
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
+
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Fix Dependency Versions
+        run: |
+          cd "$PROJECT_DIR"
+
+          npm pkg set 'devDependencies.esbuild=^0.28.2'
+
+          echo "esbuild version requirement updated"
 
       - name: Install Dependencies
         run: |
@@ -110,9 +130,12 @@ jobs:
 
           npm run build
 
-          test -s dist/index.html
+          if [ ! -s dist/index.html ]; then
+            echo "ERROR: Game build failed"
+            exit 1
+          fi
 
-      - name: Create Android App
+      - name: Create Android Project
         run: |
           cd "$PROJECT_DIR"
 
@@ -136,8 +159,7 @@ jobs:
               "android.permission.INTERNET",
               "android.permission.ACCESS_WIFI_STATE",
               "android.permission.CHANGE_WIFI_MULTICAST_STATE",
-              "android.permission.ACCESS_NETWORK_STATE",
-              "android.permission.WAKE_LOCK"
+              "android.permission.ACCESS_NETWORK_STATE"
           ]
 
           for perm in permissions:
@@ -163,7 +185,7 @@ jobs:
               )
 
           p.write_text(s)
-          print("Android settings configured")
+          print("Android manifest configured")
           PY
 
       - name: Build APK
@@ -183,13 +205,13 @@ jobs:
             exit 1
           fi
 
-          echo "APK created successfully"
+          echo "APK successfully created"
           ls -lh "$APK"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: HAMMER-MAN-MULTIPLAYER-APK
-          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ steps.locate.outputs.dir }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
